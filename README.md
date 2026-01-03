@@ -192,21 +192,80 @@
 
 # 
 
-# \## 📊 Analytics \& Prediction (Conceptual)
+# \## 📊 Analytics \& Prediction
 
 # 
 
-# Smart’Q is designed to support:
-
-# \- Crowd-level analysis
-
-# \- Peak-hour identification
-
-# \- Basic wait-time estimation using historical patterns
+# Smart'Q now includes **Machine Learning-based predictions** using Random Forest models:
 
 # 
 
-# (Current implementation focuses on core queue logic, with prediction logic planned as future enhancement.)
+# \- ⏱️ **Predict Waiting Time** - Estimate how long a customer will wait based on position, service type, and time patterns
+
+# \- 📈 **Predict Queue Length** - Forecast crowd/queue size for specific times
+
+# \- 👥 **Predict No-Show Probability** - Estimate likelihood of no-shows
+
+# \- 🕒 **Suggest Best Time to Visit** - Recommend optimal visit times with lowest wait
+
+# \- ⚠️ **Predict Peak Hours** - Identify busy periods and queue density
+
+# 
+
+# ### ML Service Setup
+
+# 
+
+# 1. **Install Python dependencies:**
+# ```bash
+# cd backend/ml
+# pip install -r requirements.txt
+# ```
+
+# 
+
+# 2. **Start the ML service:**
+# ```bash
+# cd backend
+# python ml/ml_service.py
+# ```
+
+# The service runs on `http://localhost:5001`
+
+# 
+
+# 3. **Train models with your data:**
+# ```bash
+# POST http://localhost:5000/api/ml/train
+# ```
+
+# 
+
+# ### ML API Endpoints
+
+# 
+
+# All ML endpoints are accessible at `/api/ml/*`:
+
+# 
+
+# - `POST /api/ml/predict/waiting-time` - Predict waiting time
+
+# - `POST /api/ml/predict/queue-length` - Predict queue/crowd length
+
+# - `POST /api/ml/predict/no-show` - Predict no-show probability
+
+# - `POST /api/ml/suggest/best-time` - Get best time suggestions
+
+# - `POST /api/ml/predict/peak-hours` - Predict peak hours
+
+# - `POST /api/ml/train` - Train all models
+
+# - `GET /api/ml/status` - Check ML service status
+
+# 
+
+# See `ML_SETUP_GUIDE.md` for detailed setup instructions.
 
 # 
 
@@ -218,7 +277,7 @@
 
 # 
 
-# \- Advanced machine learning–based crowd prediction
+# \- Enhanced ML models with more features (weather, events, etc.)
 
 # \- WebSocket-based real-time updates
 

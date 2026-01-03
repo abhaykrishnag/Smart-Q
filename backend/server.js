@@ -1,5 +1,6 @@
 const queueRoutes = require("./routes/queueRoutes");
 const eventRoutes = require("./routes/eventRoutes");
+const mlRoutes = require("./routes/mlRoutes");
 const connectDB = require("./config/db");
 const express = require("express");
 const cors = require("cors");
@@ -17,6 +18,7 @@ app.use(
 app.use(express.json());
 app.use("/api/queue", queueRoutes);
 app.use("/api/events", eventRoutes);
+app.use("/api/ml", mlRoutes);
 app.get("/", (req, res) => {
   res.send("Smart'Q backend running successfully");
 });

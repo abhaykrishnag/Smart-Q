@@ -15,16 +15,31 @@ router.post("/join", async (req, res) => {
     const count = await Queue.countDocuments();
     const tokenNumber = `T${count + 1}`;
 
+    // Calculate position in queue
+    const waitingCount = await Queue.countDocuments({
+      service,
+      status: "Waiting"
+    });
+    const positionInQueue = waitingCount + 1;
+
+    // Get current date/time for ML features
+    const now = new Date();
+
     const newQueue = new Queue({
       tokenNumber,
-      service
+      service,
+      positionInQueue,
+      joinedAt: now,
+      dayOfWeek: now.getDay(),
+      hourOfDay: now.getHours()
     });
 
     await newQueue.save();
 
     res.status(201).json({
       message: "Joined queue successfully",
-      token: tokenNumber
+      token: tokenNumber,
+      positionInQueue: positionInQueue
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -41,18 +56,33 @@ router.get("/", async (req, res) => {
   }
 });
 
-module.exports = router;
-
 // START SERVING TOKEN
 router.put("/:id/start", async (req, res) => {
   try {
-    const queueItem = await Queue.findByIdAndUpdate(
+    const queueItem = await Queue.findById(req.params.id);
+    
+    if (!queueItem) {
+      return res.status(404).json({ message: "Queue item not found" });
+    }
+
+    const now = new Date();
+    const startedAt = queueItem.startedAt || now;
+    
+    // Calculate waiting time
+    const joinedAt = queueItem.joinedAt || queueItem.createdAt;
+    const waitingTime = Math.round((startedAt - joinedAt) / (1000 * 60)); // minutes
+
+    const updatedQueue = await Queue.findByIdAndUpdate(
       req.params.id,
-      { status: "In Progress" },
+      { 
+        status: "In Progress",
+        startedAt: startedAt,
+        waitingTime: waitingTime
+      },
       { new: true }
     );
 
-    res.json(queueItem);
+    res.json(updatedQueue);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -61,14 +91,33 @@ router.put("/:id/start", async (req, res) => {
 // COMPLETE TOKEN
 router.put("/:id/complete", async (req, res) => {
   try {
-    const queueItem = await Queue.findByIdAndUpdate(
+    const queueItem = await Queue.findById(req.params.id);
+    
+    if (!queueItem) {
+      return res.status(404).json({ message: "Queue item not found" });
+    }
+
+    const now = new Date();
+    const completedAt = queueItem.completedAt || now;
+    
+    // Calculate service time
+    const startedAt = queueItem.startedAt || queueItem.joinedAt || queueItem.createdAt;
+    const serviceTime = Math.round((completedAt - startedAt) / (1000 * 60)); // minutes
+
+    const updatedQueue = await Queue.findByIdAndUpdate(
       req.params.id,
-      { status: "Completed" },
+      { 
+        status: "Completed",
+        completedAt: completedAt,
+        serviceTime: serviceTime
+      },
       { new: true }
     );
 
-    res.json(queueItem);
+    res.json(updatedQueue);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 });
+
+module.exports = router;

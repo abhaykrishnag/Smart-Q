@@ -1,2 +1,9 @@
 node_modules/
 .env
+
+# ML Service files
+backend/ml/saved_models/
+backend/ml/__pycache__/
+backend/ml/*.pyc
+backend/ml/*.pkl
+.DS_Store
