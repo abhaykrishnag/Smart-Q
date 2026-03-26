@@ -18,6 +18,17 @@ const SMTP_USER = trimEnv(process.env.SMTP_USER) || trimEnv(process.env.EMAIL_US
 const SMTP_PASS = trimEnv(process.env.SMTP_PASS) || trimEnv(process.env.EMAIL_PASS);
 const SMTP_FROM = trimEnv(process.env.SMTP_FROM) || SMTP_USER;
 
+// If SMTP_SECURE and SMTP_PORT are mismatched, prefer the port convention.
+// (helps with localhost vs production env drift)
+if (SMTP_PORT === 465 && SMTP_SECURE === false) {
+  console.warn("[emailService] SMTP_SECURE was false but SMTP_PORT=465; forcing secure=true");
+}
+if (SMTP_PORT === 587 && SMTP_SECURE === true) {
+  console.warn("[emailService] SMTP_SECURE was true but SMTP_PORT=587; forcing secure=false");
+}
+const effectiveSMTP_SECURE =
+  SMTP_PORT === 465 ? true : SMTP_PORT === 587 ? false : SMTP_SECURE;
+
 // Log SMTP configuration status on startup (without exposing sensitive data)
 if (!SMTP_USER || !SMTP_PASS) {
   console.warn("[emailService] WARNING: SMTP is not fully configured. OTP emails will fail. Required env vars: SMTP_USER (or EMAIL_USER) and SMTP_PASS (or EMAIL_PASS)");
@@ -48,7 +59,7 @@ const getTransporter = () => {
     transporter = nodemailer.createTransport({
       host: SMTP_HOST,
       port: SMTP_PORT,
-      secure: SMTP_SECURE,
+      secure: effectiveSMTP_SECURE,
       connectionTimeout: 10000,
       greetingTimeout: 10000,
       socketTimeout: 10000,
@@ -68,6 +79,11 @@ const mapSmtpErrorReason = (error) => {
   if (code === "EAUTH" || responseCode === 534 || responseCode === 535) {
     return "smtp-auth-failed";
   }
+  // Gmail sometimes returns 454 "temporary system problem" for auth that will
+  // succeed on a subsequent attempt.
+  if (responseCode === 454 || String(error?.message || "").toLowerCase().includes("temporary system problem")) {
+    return "smtp-timeout";
+  }
   if (code === "ETIMEDOUT") {
     return "smtp-timeout";
   }
@@ -78,19 +94,47 @@ const mapSmtpErrorReason = (error) => {
 };
 
 const sendMailSafe = async (mailOptions, context) => {
-  try {
-    await getTransporter().sendMail(mailOptions);
-    return { sent: true };
-  } catch (error) {
-    const reason = mapSmtpErrorReason(error);
-    console.error(`[email:${context}] send failed`, {
-      reason,
-      code: error?.code || null,
-      responseCode: error?.responseCode || null,
-      command: error?.command || null
-    });
-    return { sent: false, reason };
+  const maxAttempts = 3;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const result = await getTransporter().sendMail(mailOptions);
+      return { sent: true, messageId: result?.messageId || null };
+    } catch (error) {
+      lastError = error;
+      const reason = mapSmtpErrorReason(error);
+
+      // If the connection is broken or SMTP is temporarily unavailable,
+      // reset the transporter so the next attempt recreates a fresh connection.
+      if (reason === "smtp-connection-failed" || reason === "smtp-timeout") {
+        transporter = null;
+      }
+
+      const isTransient =
+        reason === "smtp-connection-failed" ||
+        reason === "smtp-timeout";
+
+      if (!isTransient || attempt === maxAttempts) {
+        console.error(`[email:${context}] send failed`, {
+          reason,
+          attempt,
+          code: error?.code || null,
+          responseCode: error?.responseCode || null,
+          command: error?.command || null
+        });
+        return { sent: false, reason };
+      }
+
+      // Backoff between retries
+      const backoffMs = 1000 * attempt;
+      await new Promise((r) => setTimeout(r, backoffMs));
+    }
   }
+
+  // Should never reach here
+  const reason = lastError ? mapSmtpErrorReason(lastError) : "smtp-send-failed";
+  return { sent: false, reason };
 };
 
 const buildHtmlTemplate = ({ userName, tokenNumber, serviceName, estimatedWaitTime }) => {

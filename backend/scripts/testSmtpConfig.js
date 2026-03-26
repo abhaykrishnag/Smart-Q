@@ -65,10 +65,13 @@ const testSmtpConfig = async () => {
       ? smtpSecureRaw.toLowerCase() === "true"
       : smtpPort === 465;
 
+  const effectiveSMTP_SECURE =
+    smtpPort === 465 ? true : smtpPort === 587 ? false : smtpSecure;
+
   const config = {
     host: trimEnv(process.env.SMTP_HOST) || "smtp.gmail.com",
     port: smtpPort,
-    secure: smtpSecure,
+    secure: effectiveSMTP_SECURE,
     auth: {
       user: trimEnv(process.env.SMTP_USER) || trimEnv(process.env.EMAIL_USER),
       pass: trimEnv(process.env.SMTP_PASS) || trimEnv(process.env.EMAIL_PASS)

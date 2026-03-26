@@ -3,6 +3,7 @@ const router = express.Router();
 const Queue = require("../models/queue");
 const QueueCounter = require("../models/queueCounter");
 const Event = require("../models/event");
+const User = require("../models/user");
 const { authMiddleware, adminMiddleware } = require("../middleware/auth");
 const { queueJoinLimiter } = require("../middleware/rateLimiters");
 const { sendQueueRegistrationEmail } = require("../services/emailService");
@@ -10,6 +11,7 @@ const { getPredictionsIfTrained } = require("../services/mlPredictionService");
 const { purgeExpiredEvents, isEventExpired } = require("../services/eventCleanupService");
 const mlConfig = require("../../src/config/mlConfig");
 const { callMLInference } = require("../../src/services/mlSafeWrapper");
+const jwt = require("jsonwebtoken");
 
 const ML_SERVICE_URL = process.env.ML_SERVICE_URL || "https://smartq-ml.onrender.com";
 const normalizeService = (value) => String(value || "").trim();
@@ -233,7 +235,28 @@ router.post("/join", queueJoinLimiter, async (req, res) => {
     });
     // ─────────────────────────────────────
 
-    const recipientEmail = guestEmail || email;
+    let recipientEmail = guestEmail || email;
+    let inferredUserName = guestName || null;
+
+    // Fallback: if frontend didn't provide guestEmail/email, infer from Authorization JWT.
+    // This makes token-confirmation emails work reliably across localhost/production
+    // even when customerData isn't hydrated correctly.
+    if (!recipientEmail) {
+      const authHeader = req.headers.authorization || "";
+      const token = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : null;
+      if (token) {
+        try {
+          const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+          if (decoded?.id) {
+            const user = await User.findById(decoded.id).lean();
+            if (user?.email) recipientEmail = user.email;
+            if (!inferredUserName && user?.name) inferredUserName = user.name;
+          }
+        } catch (e) {
+          // Ignore; recipientEmail may be provided by frontend.
+        }
+      }
+    }
     if (!recipientEmail) {
       console.warn("[queue/join] recipientEmail missing; email will not be sent:", {
         guestEmailIsProvided: guestEmail !== undefined && guestEmail !== null,
@@ -245,7 +268,7 @@ router.post("/join", queueJoinLimiter, async (req, res) => {
     if (recipientEmail) {
       sendQueueRegistrationEmail({
         toEmail: recipientEmail,
-        userName: guestName || "User",
+        userName: inferredUserName || guestName || "User",
         tokenNumber,
         serviceName: normalizedService,
         estimatedWaitTime
@@ -256,7 +279,9 @@ router.post("/join", queueJoinLimiter, async (req, res) => {
             reason: mailResult?.reason
           });
         } else {
-          console.log(`Queue confirmation email sent to ${recipientEmail}`);
+          console.log(`Queue confirmation email sent to ${recipientEmail}`, {
+            messageId: mailResult?.messageId || undefined
+          });
         }
       }).catch((mailError) => {
         // sendQueueRegistrationEmail should not throw (it wraps nodemailer errors),
