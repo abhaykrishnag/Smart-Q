@@ -1,12 +1,30 @@
 // Environment validation utility
 const validateSmtpConfig = () => {
+  const trimEnv = (value) => (typeof value === "string" ? value.trim() : value);
+
+  const SMTP_HOST = trimEnv(process.env.SMTP_HOST) || "smtp.gmail.com";
+  const SMTP_PORT = Number(trimEnv(process.env.SMTP_PORT) || 465);
+
+  // If SMTP_SECURE isn't explicitly set, infer from the port:
+  // - 465 => secure true (implicit TLS/SSL)
+  // - 587 => secure false (STARTTLS)
+  const smtpSecureRaw = trimEnv(process.env.SMTP_SECURE);
+  const SMTP_SECURE =
+    typeof smtpSecureRaw === "string" && smtpSecureRaw.length > 0
+      ? smtpSecureRaw.toLowerCase() === "true"
+      : SMTP_PORT === 465;
+
+  const SMTP_USER = trimEnv(process.env.SMTP_USER) || trimEnv(process.env.EMAIL_USER);
+  const SMTP_PASS = trimEnv(process.env.SMTP_PASS) || trimEnv(process.env.EMAIL_PASS);
+  const SMTP_FROM = trimEnv(process.env.SMTP_FROM) || SMTP_USER;
+
   const config = {
-    SMTP_HOST: process.env.SMTP_HOST || "smtp.gmail.com",
-    SMTP_PORT: Number(process.env.SMTP_PORT || 465),
-    SMTP_SECURE: String(process.env.SMTP_SECURE || "true").toLowerCase() === "true",
-    SMTP_USER: process.env.SMTP_USER || process.env.EMAIL_USER,
-    SMTP_PASS: process.env.SMTP_PASS || process.env.EMAIL_PASS,
-    SMTP_FROM: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.EMAIL_USER
+    SMTP_HOST,
+    SMTP_PORT,
+    SMTP_SECURE,
+    SMTP_USER,
+    SMTP_PASS,
+    SMTP_FROM
   };
 
   const isConfigured = Boolean(config.SMTP_USER && config.SMTP_PASS && config.SMTP_FROM);

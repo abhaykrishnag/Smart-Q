@@ -1,11 +1,22 @@
 const nodemailer = require("nodemailer");
 
-const SMTP_HOST = process.env.SMTP_HOST || "smtp.gmail.com";
-const SMTP_PORT = Number(process.env.SMTP_PORT || 465);
-const SMTP_SECURE = String(process.env.SMTP_SECURE || "true").toLowerCase() === "true";
-const SMTP_USER = process.env.SMTP_USER || process.env.EMAIL_USER;
-const SMTP_PASS = process.env.SMTP_PASS || process.env.EMAIL_PASS;
-const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER;
+const trimEnv = (value) => (typeof value === "string" ? value.trim() : value);
+
+const SMTP_HOST = trimEnv(process.env.SMTP_HOST) || "smtp.gmail.com";
+const SMTP_PORT = Number(trimEnv(process.env.SMTP_PORT) || 465);
+
+// If SMTP_SECURE isn't explicitly set, infer from the port:
+// - 465 => secure true (implicit TLS/SSL)
+// - 587 => secure false (STARTTLS)
+const smtpSecureRaw = trimEnv(process.env.SMTP_SECURE);
+const SMTP_SECURE =
+  typeof smtpSecureRaw === "string" && smtpSecureRaw.length > 0
+    ? smtpSecureRaw.toLowerCase() === "true"
+    : SMTP_PORT === 465;
+
+const SMTP_USER = trimEnv(process.env.SMTP_USER) || trimEnv(process.env.EMAIL_USER);
+const SMTP_PASS = trimEnv(process.env.SMTP_PASS) || trimEnv(process.env.EMAIL_PASS);
+const SMTP_FROM = trimEnv(process.env.SMTP_FROM) || SMTP_USER;
 
 // Log SMTP configuration status on startup (without exposing sensitive data)
 if (!SMTP_USER || !SMTP_PASS) {
@@ -19,6 +30,15 @@ const hasSmtpConfig = () => Boolean(SMTP_USER && SMTP_PASS && SMTP_FROM);
 const isValidEmail = (value) => {
   if (!value) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value).trim());
+};
+
+const maskEmail = (value) => {
+  const s = typeof value === "string" ? value.trim() : "";
+  if (!s) return "NOT_SET";
+  const [local, domain] = s.split("@");
+  if (!local || !domain) return "INVALID_FORMAT";
+  const safeLocal = local.length <= 3 ? local[0] + "***" : local.slice(0, 3) + "***";
+  return `${safeLocal}@${domain}`;
 };
 
 let transporter = null;
@@ -98,8 +118,16 @@ const sendQueueRegistrationEmail = async ({
   serviceName,
   estimatedWaitTime
 }) => {
-  if (!isValidEmail(toEmail)) return { sent: false, reason: "invalid-recipient" };
-  if (!hasSmtpConfig()) return { sent: false, reason: "smtp-not-configured" };
+  if (!isValidEmail(toEmail)) {
+    console.warn("[email:queue-registration] invalid recipient:", {
+      toEmail: maskEmail(toEmail)
+    });
+    return { sent: false, reason: "invalid-recipient" };
+  }
+  if (!hasSmtpConfig()) {
+    console.warn("[email:queue-registration] SMTP not configured.");
+    return { sent: false, reason: "smtp-not-configured" };
+  }
 
   const mailOptions = {
     from: SMTP_FROM,
@@ -121,8 +149,16 @@ const sendQueueRegistrationEmail = async ({
 };
 
 const sendLoginOtpEmail = async ({ toEmail, userName, otp }) => {
-  if (!isValidEmail(toEmail)) return { sent: false, reason: "invalid-recipient" };
-  if (!hasSmtpConfig()) return { sent: false, reason: "smtp-not-configured" };
+  if (!isValidEmail(toEmail)) {
+    console.warn("[email:login-otp] invalid recipient:", {
+      toEmail: maskEmail(toEmail)
+    });
+    return { sent: false, reason: "invalid-recipient" };
+  }
+  if (!hasSmtpConfig()) {
+    console.warn("[email:login-otp] SMTP not configured.");
+    return { sent: false, reason: "smtp-not-configured" };
+  }
 
   const safeName = userName || "User";
   const mailOptions = {
