@@ -77,7 +77,7 @@ router.post("/send-otp", otpSendLimiter, async (req, res) => {
         userMessage = "Email service authentication failed. Please contact support.";
         console.error("[OTP] CRITICAL: SMTP authentication failed. Check your email credentials.");
       } else if (mailResult.reason === "smtp-connection-failed") {
-        userMessage = "Could not connect to email service. Please try again later.";
+        userMessage = "You have reached your SMTP daily limit";
         console.error("[OTP] CRITICAL: Could not connect to SMTP server. Check host and port.");
       } else if (mailResult.reason === "smtp-timeout") {
         userMessage = "Email service timed out. Please try again.";
