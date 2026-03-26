@@ -8,35 +8,23 @@ const {
   otpSendLimiter,
   otpVerifyLimiter
 } = require("../middleware/rateLimiters");
+const { validateSmtpConfig } = require("../utils/envValidation");
 
 const generateOtp = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-const canUseOtpFallback = () => {
-  if (String(process.env.ALLOW_OTP_FALLBACK || "").toLowerCase() === "true") {
-    return true;
-  }
-
-  return process.env.NODE_ENV !== "production";
-};
-
-const buildOtpSendFailureMessage = (reason) => {
-  switch (reason) {
-    case "smtp-not-configured":
-      return "OTP email service is not configured.";
-    case "smtp-auth-failed":
-      return "OTP email authentication failed.";
-    case "smtp-timeout":
-    case "smtp-connection-failed":
-      return "Could not connect to email service. Please try again later.";
-    default:
-      return "Failed to send OTP";
-  }
-};
-
-const isDeferredDeliveryReason = (reason) =>
-  reason === "smtp-timeout" || reason === "smtp-connection-failed";
+// ================= DIAGNOSTIC ENDPOINT =================
+router.get("/diagnostic", (req, res) => {
+  const smtpValidation = validateSmtpConfig();
+  res.json({
+    service: "OTP Service",
+    smtpConfigured: smtpValidation.isConfigured,
+    config: smtpValidation.config,
+    issues: smtpValidation.issues,
+    timestamp: new Date().toISOString()
+  });
+});
 
 // ================= SEND OTP =================
 router.post("/send-otp", otpSendLimiter, async (req, res) => {
@@ -56,63 +44,62 @@ router.post("/send-otp", otpSendLimiter, async (req, res) => {
       return res.status(401).json({ message: "Account inactive" });
     }
 
-    const now = new Date();
-    const existingRecord = await Otp.findOne({ email: normalizedEmail }).sort({ updatedAt: -1, createdAt: -1 });
-    const hasReusableOtp = existingRecord && existingRecord.expiresAt > now;
+    const otp = generateOtp();
 
-    const otp = hasReusableOtp ? existingRecord.otp : generateOtp();
-    const expiresAt = hasReusableOtp
-      ? existingRecord.expiresAt
-      : new Date(now.getTime() + 5 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
-    if (hasReusableOtp) {
-      await Otp.updateOne(
-        { _id: existingRecord._id },
-        { $set: { updatedAt: now } }
-      );
-    } else {
-      await Otp.deleteMany({ email: normalizedEmail });
-      await Otp.create({
-        email: normalizedEmail,
-        otp,
-        expiresAt
-      });
-    }
+    await Otp.findOneAndUpdate(
+      { email: normalizedEmail },
+      { otp, expiresAt },
+      { upsert: true, new: true }
+    );
+
+    console.log(`[OTP] Attempting to send OTP to ${normalizedEmail}`);
 
     const mailResult = await sendLoginOtpEmail({
       toEmail: normalizedEmail,
       userName: user.name,
       otp
     });
-    if (!mailResult.sent) {
-      if (isDeferredDeliveryReason(mailResult.reason)) {
-        return res.json({
-          message: "OTP request processed. Email delivery may take a short while. Please check your inbox and spam folder.",
-          delivery: "pending",
-          reason: mailResult.reason
-        });
-      }
 
-      if (canUseOtpFallback()) {
-        return res.json({
-          message: "OTP generated. Email delivery is unavailable, so the OTP is shown for local use.",
-          delivery: "fallback",
-          devOtp: otp,
-          reason: mailResult.reason
-        });
+    if (!mailResult.sent) {
+      console.error(`[OTP] Failed to send OTP to ${normalizedEmail}`, {
+        reason: mailResult.reason,
+        timestamp: new Date().toISOString()
+      });
+
+      // Provide more helpful error message based on the reason
+      let userMessage = "Failed to send OTP";
+      if (mailResult.reason === "smtp-not-configured") {
+        userMessage = "Email service is not configured. Please contact support.";
+        console.error("[OTP] CRITICAL: SMTP is not configured. Check environment variables: SMTP_USER/EMAIL_USER and SMTP_PASS/EMAIL_PASS");
+      } else if (mailResult.reason === "smtp-auth-failed") {
+        userMessage = "Email service authentication failed. Please contact support.";
+        console.error("[OTP] CRITICAL: SMTP authentication failed. Check your email credentials.");
+      } else if (mailResult.reason === "smtp-connection-failed") {
+        userMessage = "Could not connect to email service. Please try again later.";
+        console.error("[OTP] CRITICAL: Could not connect to SMTP server. Check host and port.");
+      } else if (mailResult.reason === "smtp-timeout") {
+        userMessage = "Email service timed out. Please try again.";
       }
 
       return res.status(500).json({
-        message: buildOtpSendFailureMessage(mailResult.reason),
-        reason: mailResult.reason
+        message: userMessage,
+        reason: mailResult.reason,
+        debug: process.env.NODE_ENV === "development" ? mailResult.reason : undefined
       });
     }
 
-    res.json({ message: "OTP sent successfully", delivery: "email" });
+    console.log(`[OTP] OTP sent successfully to ${normalizedEmail}`);
+    res.json({ message: "OTP sent successfully" });
 
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Failed to send OTP" });
+    console.error("[OTP] Unexpected error in send-otp", {
+      message: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+    res.status(500).json({ message: "Failed to send OTP", error: error.message });
   }
 });
 

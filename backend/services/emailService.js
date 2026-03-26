@@ -1,19 +1,39 @@
 const nodemailer = require("nodemailer");
 
-const SMTP_HOST = process.env.SMTP_HOST || "smtp.gmail.com";
-const SMTP_PORT = Number(process.env.SMTP_PORT || 465);
-const SMTP_SECURE = String(process.env.SMTP_SECURE || "true").toLowerCase() === "true";
-const SMTP_USER = process.env.SMTP_USER || process.env.EMAIL_USER;
-const SMTP_PASS = process.env.SMTP_PASS || process.env.EMAIL_PASS;
-const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER;
-const SMTP_ENABLE_FALLBACK = String(process.env.SMTP_ENABLE_FALLBACK || "true").toLowerCase() === "true";
-const SMTP_TIMEOUT_MS = Number(process.env.SMTP_TIMEOUT_MS || 30000);
+const trimEnv = (value) => (typeof value === "string" ? value.trim() : value);
+
+const SMTP_HOST = trimEnv(process.env.SMTP_HOST) || "smtp.gmail.com";
+const SMTP_PORT = Number(trimEnv(process.env.SMTP_PORT) || 465);
+const smtpSecureRaw = trimEnv(process.env.SMTP_SECURE);
+const SMTP_SECURE =
+  typeof smtpSecureRaw === "string" && smtpSecureRaw.length > 0
+    ? smtpSecureRaw.toLowerCase() === "true"
+    : SMTP_PORT === 465;
+const SMTP_USER = trimEnv(process.env.SMTP_USER) || trimEnv(process.env.EMAIL_USER);
+const SMTP_PASS = trimEnv(process.env.SMTP_PASS) || trimEnv(process.env.EMAIL_PASS);
+const SMTP_FROM = trimEnv(process.env.SMTP_FROM) || SMTP_USER;
+const SMTP_ENABLE_FALLBACK = String(trimEnv(process.env.SMTP_ENABLE_FALLBACK) || "true").toLowerCase() === "true";
+const SMTP_TIMEOUT_MS = Number(trimEnv(process.env.SMTP_TIMEOUT_MS) || 30000);
 
 const hasSmtpConfig = () => Boolean(SMTP_USER && SMTP_PASS && SMTP_FROM);
+
+if (!SMTP_USER || !SMTP_PASS) {
+  console.warn("[emailService] SMTP is not fully configured. OTP emails will fail.");
+} else {
+  console.log("[emailService] SMTP configured for user:", `${SMTP_USER.slice(0, 3)}***`);
+}
 
 const isValidEmail = (value) => {
   if (!value) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value).trim());
+};
+
+const maskEmail = (value) => {
+  const normalized = String(value || "").trim();
+  const [local = "", domain = ""] = normalized.split("@");
+  if (!local || !domain) return "INVALID_EMAIL";
+  const safeLocal = local.length <= 3 ? `${local[0] || "*"}***` : `${local.slice(0, 3)}***`;
+  return `${safeLocal}@${domain}`;
 };
 
 const transporters = new Map();
@@ -153,23 +173,21 @@ const sendMailSafe = async (mailOptions, context) => {
   return lastFailure;
 };
 
-const buildHtmlTemplate = ({ userName, tokenNumber, serviceName, estimatedWaitTime }) => {
-  return `
-    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px;background:#f9fafb;border-radius:12px;border:1px solid #e5e7eb;">
-      <h2 style="margin:0 0 16px;color:#111827;">Queue Registration Confirmation - Smart'Q</h2>
-      <p style="margin:0 0 14px;color:#374151;">Dear ${userName},</p>
-      <p style="margin:0 0 16px;color:#374151;">This email confirms your successful registration in the queue.</p>
-      <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;">
-        <p style="margin:0 0 8px;color:#111827;"><strong>Token Number:</strong> ${tokenNumber}</p>
-        <p style="margin:0 0 8px;color:#111827;"><strong>Service Type:</strong> ${serviceName}</p>
-        <p style="margin:0;color:#111827;"><strong>Estimated Waiting Time:</strong> ${estimatedWaitTime} minutes</p>
-      </div>
-      <p style="margin:16px 0 0;color:#374151;">Kindly be available near the service counter before your turn.</p>
-      <p style="margin:16px 0 0;color:#374151;">Thank you for using Smart'Q.</p>
-      <p style="margin:16px 0 0;color:#374151;">Sincerely,<br/>Smart'Q Support Team</p>
+const buildHtmlTemplate = ({ userName, tokenNumber, serviceName, estimatedWaitTime }) => `
+  <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px;background:#f9fafb;border-radius:12px;border:1px solid #e5e7eb;">
+    <h2 style="margin:0 0 16px;color:#111827;">Queue Registration Confirmation - Smart'Q</h2>
+    <p style="margin:0 0 14px;color:#374151;">Dear ${userName},</p>
+    <p style="margin:0 0 16px;color:#374151;">This email confirms your successful registration in the queue.</p>
+    <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;">
+      <p style="margin:0 0 8px;color:#111827;"><strong>Token Number:</strong> ${tokenNumber}</p>
+      <p style="margin:0 0 8px;color:#111827;"><strong>Service Type:</strong> ${serviceName}</p>
+      <p style="margin:0;color:#111827;"><strong>Estimated Waiting Time:</strong> ${estimatedWaitTime} minutes</p>
     </div>
-  `;
-};
+    <p style="margin:16px 0 0;color:#374151;">Kindly be available near the service counter before your turn.</p>
+    <p style="margin:16px 0 0;color:#374151;">Thank you for using Smart'Q.</p>
+    <p style="margin:16px 0 0;color:#374151;">Sincerely,<br/>Smart'Q Support Team</p>
+  </div>
+`;
 
 const sendQueueRegistrationEmail = async ({
   toEmail,
@@ -178,8 +196,17 @@ const sendQueueRegistrationEmail = async ({
   serviceName,
   estimatedWaitTime
 }) => {
-  if (!isValidEmail(toEmail)) return { sent: false, reason: "invalid-recipient" };
-  if (!hasSmtpConfig()) return { sent: false, reason: "smtp-not-configured" };
+  if (!isValidEmail(toEmail)) {
+    console.warn("[email:queue-registration] invalid recipient:", {
+      toEmail: maskEmail(toEmail)
+    });
+    return { sent: false, reason: "invalid-recipient" };
+  }
+
+  if (!hasSmtpConfig()) {
+    console.warn("[email:queue-registration] SMTP not configured.");
+    return { sent: false, reason: "smtp-not-configured" };
+  }
 
   const mailOptions = {
     from: SMTP_FROM,
@@ -201,8 +228,17 @@ const sendQueueRegistrationEmail = async ({
 };
 
 const sendLoginOtpEmail = async ({ toEmail, userName, otp }) => {
-  if (!isValidEmail(toEmail)) return { sent: false, reason: "invalid-recipient" };
-  if (!hasSmtpConfig()) return { sent: false, reason: "smtp-not-configured" };
+  if (!isValidEmail(toEmail)) {
+    console.warn("[email:login-otp] invalid recipient:", {
+      toEmail: maskEmail(toEmail)
+    });
+    return { sent: false, reason: "invalid-recipient" };
+  }
+
+  if (!hasSmtpConfig()) {
+    console.warn("[email:login-otp] SMTP not configured.");
+    return { sent: false, reason: "smtp-not-configured" };
+  }
 
   const safeName = userName || "User";
   const mailOptions = {

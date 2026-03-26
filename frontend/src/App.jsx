@@ -34,7 +34,9 @@ function App() {
       setNavigationHistory((prev) => [...prev, currentPage]);
     }
 
-    if (page === "customer-dashboard" && data && data.name) {
+    // Persist customer identity so JoinQueue can send token confirmation emails.
+    // Don't require `data.name` because OTP-based auth may return empty/undefined name.
+    if (page === "customer-dashboard" && data && (data.name || data.email || data.phone)) {
       setCustomerData(data);
     }
 

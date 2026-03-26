@@ -234,15 +234,34 @@ router.post("/join", queueJoinLimiter, async (req, res) => {
     // ─────────────────────────────────────
 
     const recipientEmail = guestEmail || email;
-    if (isCustomerUser && recipientEmail) {
+    if (!recipientEmail) {
+      console.warn("[queue/join] recipientEmail missing; email will not be sent:", {
+        guestEmailIsProvided: guestEmail !== undefined && guestEmail !== null,
+        guestEmailValueIsEmpty: !guestEmail,
+        emailIsProvided: email !== undefined && email !== null,
+        emailValueIsEmpty: !email
+      });
+    }
+    if (recipientEmail) {
       sendQueueRegistrationEmail({
         toEmail: recipientEmail,
         userName: guestName || "User",
         tokenNumber,
         serviceName: normalizedService,
         estimatedWaitTime
+      }).then((mailResult) => {
+        if (!mailResult?.sent) {
+          console.error("Queue confirmation email failed:", {
+            toEmail: recipientEmail,
+            reason: mailResult?.reason
+          });
+        } else {
+          console.log(`Queue confirmation email sent to ${recipientEmail}`);
+        }
       }).catch((mailError) => {
-        console.error("Queue confirmation email failed:", mailError.message);
+        // sendQueueRegistrationEmail should not throw (it wraps nodemailer errors),
+        // but we keep a hard safety net here.
+        console.error("Queue confirmation email unexpected error:", mailError?.message || mailError);
       });
     }
 
