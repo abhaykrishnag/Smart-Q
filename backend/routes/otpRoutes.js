@@ -108,8 +108,9 @@ router.post("/verify-otp", otpVerifyLimiter, async (req, res) => {
   try {
     const { email, otp } = req.body;
     const normalizedEmail = String(email || "").trim().toLowerCase();
+    const normalizedOtp = String(otp || "").trim();
 
-    if (!normalizedEmail || !otp) {
+    if (!normalizedEmail || !normalizedOtp) {
       return res.status(400).json({ message: "Email and OTP are required" });
     }
 
@@ -121,7 +122,7 @@ router.post("/verify-otp", otpVerifyLimiter, async (req, res) => {
       return res.status(401).json({ message: "Account inactive" });
     }
 
-    const record = await Otp.findOne({ email: normalizedEmail });
+    const record = await Otp.findOne({ email: normalizedEmail }).sort({ updatedAt: -1, createdAt: -1 });
 
     if (!record) {
       return res.status(400).json({ message: "OTP not found" });
@@ -131,11 +132,11 @@ router.post("/verify-otp", otpVerifyLimiter, async (req, res) => {
       return res.status(400).json({ message: "OTP expired" });
     }
 
-    if (record.otp !== otp) {
+    if (record.otp !== normalizedOtp) {
       return res.status(400).json({ message: "Invalid OTP" });
     }
 
-    await Otp.deleteOne({ email: normalizedEmail });
+    await Otp.deleteMany({ email: normalizedEmail });
 
     const accessToken = jwt.sign(
       { id: user._id, role: user.role },
