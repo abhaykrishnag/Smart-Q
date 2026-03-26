@@ -28,6 +28,7 @@ const CustomerLogin = ({ onNavigate, goBack, currentPage }) => {
   const [otpCooldown, setOtpCooldown] = useState(0);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [devOtp, setDevOtp] = useState('');
   const cooldownRef = useRef(null);
 
   // Countdown timer for OTP resend cooldown
@@ -48,12 +49,14 @@ const CustomerLogin = ({ onNavigate, goBack, currentPage }) => {
     }));
     if (errorMessage) setErrorMessage('');
     if (successMessage) setSuccessMessage('');
+    if (devOtp) setDevOtp('');
   };
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
+    setDevOtp('');
 
     try {
       setLoading(true);
@@ -122,6 +125,7 @@ const CustomerLogin = ({ onNavigate, goBack, currentPage }) => {
   const handleSendOtp = useCallback(async () => {
     setErrorMessage('');
     setSuccessMessage('');
+    setDevOtp('');
 
     if (!formData.email) {
       setErrorMessage('Enter your registered email to receive OTP.');
@@ -132,8 +136,10 @@ const CustomerLogin = ({ onNavigate, goBack, currentPage }) => {
       setOtpSending(true);
       const res = await sendCustomerLoginOtp(formData.email);
       setSuccessMessage(res?.message || 'OTP sent to your email successfully!');
+      setDevOtp(res?.devOtp || '');
       setOtpCooldown(OTP_COOLDOWN_SECONDS);
     } catch (error) {
+      setDevOtp('');
       setErrorMessage(error?.response?.data?.message || 'Failed to send OTP');
     } finally {
       setOtpSending(false);
@@ -160,6 +166,7 @@ const CustomerLogin = ({ onNavigate, goBack, currentPage }) => {
     setAuthMode('password');
     setErrorMessage('');
     setSuccessMessage('');
+    setDevOtp('');
     setLoading(false);
     setOtpCooldown(0);
     setFormData((prev) => ({
@@ -176,6 +183,28 @@ const CustomerLogin = ({ onNavigate, goBack, currentPage }) => {
     : otpCooldown > 0
       ? `Resend (${otpCooldown}s)`
       : 'Send OTP';
+  const otpBannerMessage = devOtp
+    ? `Email delivery is unavailable here. Use OTP ${devOtp} to sign in. It expires in 5 minutes.`
+    : successMessage
+      ? 'A 6-digit OTP has been sent to your registered email. It expires in 5 minutes.'
+      : 'Enter your registered email and click Send OTP to receive a 6-digit code.';
+  const otpBannerStyles = devOtp
+    ? {
+        background: 'linear-gradient(135deg, #fff7ed, #fefce8)',
+        border: '1px solid #fdba74',
+        color: '#9a3412'
+      }
+    : successMessage
+      ? {
+          background: 'linear-gradient(135deg, #eff6ff, #f0fdf4)',
+          border: '1px solid #bfdbfe',
+          color: '#1e40af'
+        }
+      : {
+          background: 'linear-gradient(135deg, #f8fafc, #eff6ff)',
+          border: '1px solid #cbd5e1',
+          color: '#475569'
+        };
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -334,14 +363,14 @@ const CustomerLogin = ({ onNavigate, goBack, currentPage }) => {
                       alignItems: 'center',
                       gap: '0.5rem',
                       padding: '0.75rem 1rem',
-                      background: 'linear-gradient(135deg, #eff6ff, #f0fdf4)',
                       borderRadius: '8px',
                       marginBottom: '1rem',
-                      border: '1px solid #bfdbfe'
+                      background: otpBannerStyles.background,
+                      border: otpBannerStyles.border
                     }}>
-                      <ShieldCheck size={18} style={{ color: '#2563eb', flexShrink: 0 }} />
-                      <span style={{ fontSize: '0.8rem', color: '#1e40af' }}>
-                        A 6-digit OTP has been sent to your registered email. It expires in 5 minutes.
+                      <ShieldCheck size={18} style={{ color: otpBannerStyles.color, flexShrink: 0 }} />
+                      <span style={{ fontSize: '0.8rem', color: otpBannerStyles.color }}>
+                        {otpBannerMessage}
                       </span>
                     </div>
 

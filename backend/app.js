@@ -95,7 +95,7 @@ if (expressMajor < 5) {
 
   app.use(hpp());
 } else {
-  console.warn("Express 5 detected — skipping mongoSanitize/hpp middleware");
+  console.log("Express 5 detected; mongoSanitize/hpp middleware skipped for compatibility.");
 }
 
 /* ================= RATE LIMIT ================= */

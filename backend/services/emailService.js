@@ -6,6 +6,8 @@ const SMTP_SECURE = String(process.env.SMTP_SECURE || "true").toLowerCase() === 
 const SMTP_USER = process.env.SMTP_USER || process.env.EMAIL_USER;
 const SMTP_PASS = process.env.SMTP_PASS || process.env.EMAIL_PASS;
 const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER;
+const SMTP_ENABLE_FALLBACK = String(process.env.SMTP_ENABLE_FALLBACK || "true").toLowerCase() === "true";
+const SMTP_TIMEOUT_MS = Number(process.env.SMTP_TIMEOUT_MS || 30000);
 
 const hasSmtpConfig = () => Boolean(SMTP_USER && SMTP_PASS && SMTP_FROM);
 
@@ -14,24 +16,84 @@ const isValidEmail = (value) => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value).trim());
 };
 
-let transporter = null;
+const transporters = new Map();
 
-const getTransporter = () => {
-  if (!transporter) {
-    transporter = nodemailer.createTransport({
-      host: SMTP_HOST,
-      port: SMTP_PORT,
-      secure: SMTP_SECURE,
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 10000,
-      auth: {
-        user: SMTP_USER,
-        pass: SMTP_PASS
-      }
-    });
+const buildTransportKey = ({ host, port, secure }) =>
+  `${host}:${port}:${secure ? "secure" : "starttls"}:${SMTP_USER}`;
+
+const buildTransportOptions = ({ host, port, secure }) => ({
+  host,
+  port,
+  secure,
+  requireTLS: !secure,
+  connectionTimeout: SMTP_TIMEOUT_MS,
+  greetingTimeout: SMTP_TIMEOUT_MS,
+  socketTimeout: SMTP_TIMEOUT_MS,
+  tls: {
+    servername: host
+  },
+  auth: {
+    user: SMTP_USER,
+    pass: SMTP_PASS
   }
-  return transporter;
+});
+
+const getTransportCandidates = () => {
+  const primary = {
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    label: "primary"
+  };
+
+  const candidates = [primary];
+  const isGmailHost = /gmail\.com$/i.test(SMTP_HOST);
+
+  if (SMTP_ENABLE_FALLBACK && isGmailHost) {
+    if (SMTP_PORT !== 587 || SMTP_SECURE !== false) {
+      candidates.push({
+        host: SMTP_HOST,
+        port: 587,
+        secure: false,
+        label: "gmail-starttls-fallback"
+      });
+    }
+
+    if (SMTP_PORT !== 465 || SMTP_SECURE !== true) {
+      candidates.push({
+        host: SMTP_HOST,
+        port: 465,
+        secure: true,
+        label: "gmail-ssl-fallback"
+      });
+    }
+  }
+
+  return candidates;
+};
+
+const getTransporter = (candidate) => {
+  const key = buildTransportKey(candidate);
+
+  if (!transporters.has(key)) {
+    transporters.set(key, nodemailer.createTransport(buildTransportOptions(candidate)));
+  }
+
+  return {
+    key,
+    transporter: transporters.get(key)
+  };
+};
+
+const resetTransporter = (key) => {
+  const transporter = transporters.get(key);
+  if (!transporter) return;
+
+  if (typeof transporter.close === "function") {
+    transporter.close();
+  }
+
+  transporters.delete(key);
 };
 
 const mapSmtpErrorReason = (error) => {
@@ -50,20 +112,45 @@ const mapSmtpErrorReason = (error) => {
   return "smtp-send-failed";
 };
 
+const isRetryableSmtpReason = (reason) =>
+  reason === "smtp-timeout" || reason === "smtp-connection-failed";
+
 const sendMailSafe = async (mailOptions, context) => {
-  try {
-    await getTransporter().sendMail(mailOptions);
-    return { sent: true };
-  } catch (error) {
-    const reason = mapSmtpErrorReason(error);
-    console.error(`[email:${context}] send failed`, {
-      reason,
-      code: error?.code || null,
-      responseCode: error?.responseCode || null,
-      command: error?.command || null
-    });
-    return { sent: false, reason };
+  const candidates = getTransportCandidates();
+  let lastFailure = { sent: false, reason: "smtp-send-failed" };
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    const { key, transporter } = getTransporter(candidate);
+
+    try {
+      await transporter.sendMail(mailOptions);
+      return { sent: true, transport: candidate.label };
+    } catch (error) {
+      const reason = mapSmtpErrorReason(error);
+      lastFailure = { sent: false, reason };
+
+      console.error(`[email:${context}] send failed`, {
+        reason,
+        code: error?.code || null,
+        responseCode: error?.responseCode || null,
+        command: error?.command || null,
+        host: candidate.host,
+        port: candidate.port,
+        secure: candidate.secure,
+        transport: candidate.label
+      });
+
+      if (isRetryableSmtpReason(reason)) {
+        resetTransporter(key);
+        continue;
+      }
+
+      return lastFailure;
+    }
   }
+
+  return lastFailure;
 };
 
 const buildHtmlTemplate = ({ userName, tokenNumber, serviceName, estimatedWaitTime }) => {
