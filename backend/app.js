@@ -12,6 +12,7 @@ const hpp = require("hpp");
 require("dotenv").config();
 
 const connectDB = require("./config/db");
+const { validateSmtpConfig } = require("./utils/envValidation");
 
 const queueRoutes = require("./routes/queueRoutes");
 const eventRoutes = require("./routes/eventRoutes");
@@ -261,6 +262,24 @@ const resolvePort = (value) => {
 const startServer = async (port = resolvePort(process.env.PORT)) => {
   await connectDB();
   await Queue.syncIndexes();
+
+  // Validate SMTP configuration
+  const smtpValidation = validateSmtpConfig();
+  if (!smtpValidation.isConfigured) {
+    console.warn("\n" + "=".repeat(70));
+    console.warn("⚠️  WARNING: SMTP is not configured!");
+    console.warn("=".repeat(70));
+    console.warn("OTP emails will NOT be sent for customer login.");
+    console.warn("\nMissing configuration:");
+    smtpValidation.issues.forEach(issue => {
+      console.warn(`  • ${issue}`);
+    });
+    console.warn("\n📖 Setup instructions: See SMTP_CONFIGURATION.md");
+    console.warn("🔧 Test configuration: node backend/scripts/testSmtpConfig.js");
+    console.warn("=".repeat(70) + "\n");
+  } else {
+    console.log("✓ SMTP is configured and OTP emails are enabled");
+  }
 
   return new Promise((resolve, reject) => {
     server.once("error", reject);

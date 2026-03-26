@@ -8,10 +8,23 @@ const {
   otpSendLimiter,
   otpVerifyLimiter
 } = require("../middleware/rateLimiters");
+const { validateSmtpConfig } = require("../utils/envValidation");
 
 const generateOtp = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
+
+// ================= DIAGNOSTIC ENDPOINT =================
+router.get("/diagnostic", (req, res) => {
+  const smtpValidation = validateSmtpConfig();
+  res.json({
+    service: "OTP Service",
+    smtpConfigured: smtpValidation.isConfigured,
+    config: smtpValidation.config,
+    issues: smtpValidation.issues,
+    timestamp: new Date().toISOString()
+  });
+});
 
 // ================= SEND OTP =================
 router.post("/send-otp", otpSendLimiter, async (req, res) => {
@@ -41,23 +54,52 @@ router.post("/send-otp", otpSendLimiter, async (req, res) => {
       { upsert: true, new: true }
     );
 
+    console.log(`[OTP] Attempting to send OTP to ${normalizedEmail}`);
+
     const mailResult = await sendLoginOtpEmail({
       toEmail: normalizedEmail,
       userName: user.name,
       otp
     });
+
     if (!mailResult.sent) {
+      console.error(`[OTP] Failed to send OTP to ${normalizedEmail}`, {
+        reason: mailResult.reason,
+        timestamp: new Date().toISOString()
+      });
+
+      // Provide more helpful error message based on the reason
+      let userMessage = "Failed to send OTP";
+      if (mailResult.reason === "smtp-not-configured") {
+        userMessage = "Email service is not configured. Please contact support.";
+        console.error("[OTP] CRITICAL: SMTP is not configured. Check environment variables: SMTP_USER/EMAIL_USER and SMTP_PASS/EMAIL_PASS");
+      } else if (mailResult.reason === "smtp-auth-failed") {
+        userMessage = "Email service authentication failed. Please contact support.";
+        console.error("[OTP] CRITICAL: SMTP authentication failed. Check your email credentials.");
+      } else if (mailResult.reason === "smtp-connection-failed") {
+        userMessage = "Could not connect to email service. Please try again later.";
+        console.error("[OTP] CRITICAL: Could not connect to SMTP server. Check host and port.");
+      } else if (mailResult.reason === "smtp-timeout") {
+        userMessage = "Email service timed out. Please try again.";
+      }
+
       return res.status(500).json({
-        message: "Failed to send OTP",
-        reason: mailResult.reason
+        message: userMessage,
+        reason: mailResult.reason,
+        debug: process.env.NODE_ENV === "development" ? mailResult.reason : undefined
       });
     }
 
+    console.log(`[OTP] OTP sent successfully to ${normalizedEmail}`);
     res.json({ message: "OTP sent successfully" });
 
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Failed to send OTP" });
+    console.error("[OTP] Unexpected error in send-otp", {
+      message: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+    res.status(500).json({ message: "Failed to send OTP", error: error.message });
   }
 });
 

@@ -7,6 +7,13 @@ const SMTP_USER = process.env.SMTP_USER || process.env.EMAIL_USER;
 const SMTP_PASS = process.env.SMTP_PASS || process.env.EMAIL_PASS;
 const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER;
 
+// Log SMTP configuration status on startup (without exposing sensitive data)
+if (!SMTP_USER || !SMTP_PASS) {
+  console.warn("[emailService] WARNING: SMTP is not fully configured. OTP emails will fail. Required env vars: SMTP_USER (or EMAIL_USER) and SMTP_PASS (or EMAIL_PASS)");
+} else {
+  console.log("[emailService] SMTP configured for user:", SMTP_USER.substring(0, 3) + "***");
+}
+
 const hasSmtpConfig = () => Boolean(SMTP_USER && SMTP_PASS && SMTP_FROM);
 
 const isValidEmail = (value) => {
