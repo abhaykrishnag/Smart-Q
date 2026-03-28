@@ -18,10 +18,14 @@ const validateSmtpConfig = () => {
   const SMTP_PASS = trimEnv(process.env.SMTP_PASS) || trimEnv(process.env.EMAIL_PASS);
   const SMTP_FROM = trimEnv(process.env.SMTP_FROM) || SMTP_USER;
 
+  // If SMTP_SECURE and SMTP_PORT are mismatched, prefer the port convention.
+  const effectiveSMTP_SECURE =
+    SMTP_PORT === 465 ? true : SMTP_PORT === 587 ? false : SMTP_SECURE;
+
   const config = {
     SMTP_HOST,
     SMTP_PORT,
-    SMTP_SECURE,
+    SMTP_SECURE: effectiveSMTP_SECURE,
     SMTP_USER,
     SMTP_PASS,
     SMTP_FROM

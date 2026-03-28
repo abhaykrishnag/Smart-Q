@@ -15,10 +15,20 @@ const SMTP_FROM = trimEnv(process.env.SMTP_FROM) || SMTP_USER;
 const SMTP_ENABLE_FALLBACK = String(trimEnv(process.env.SMTP_ENABLE_FALLBACK) || "true").toLowerCase() === "true";
 const SMTP_TIMEOUT_MS = Number(trimEnv(process.env.SMTP_TIMEOUT_MS) || 30000);
 
+if (SMTP_PORT === 465 && SMTP_SECURE === false) {
+  console.warn("[emailService] SMTP_SECURE was false but SMTP_PORT=465; forcing secure=true");
+}
+if (SMTP_PORT === 587 && SMTP_SECURE === true) {
+  console.warn("[emailService] SMTP_SECURE was true but SMTP_PORT=587; forcing secure=false");
+}
+
+const effectiveSMTP_SECURE =
+  SMTP_PORT === 465 ? true : SMTP_PORT === 587 ? false : SMTP_SECURE;
+
 const hasSmtpConfig = () => Boolean(SMTP_USER && SMTP_PASS && SMTP_FROM);
 
 if (!SMTP_USER || !SMTP_PASS) {
-  console.warn("[emailService] SMTP is not fully configured. OTP emails will fail.");
+  console.warn("[emailService] WARNING: SMTP is not fully configured. OTP emails will fail. Required env vars: SMTP_USER (or EMAIL_USER) and SMTP_PASS (or EMAIL_PASS)");
 } else {
   console.log("[emailService] SMTP configured for user:", `${SMTP_USER.slice(0, 3)}***`);
 }
@@ -62,7 +72,7 @@ const getTransportCandidates = () => {
   const primary = {
     host: SMTP_HOST,
     port: SMTP_PORT,
-    secure: SMTP_SECURE,
+    secure: effectiveSMTP_SECURE,
     label: "primary"
   };
 
@@ -70,7 +80,7 @@ const getTransportCandidates = () => {
   const isGmailHost = /gmail\.com$/i.test(SMTP_HOST);
 
   if (SMTP_ENABLE_FALLBACK && isGmailHost) {
-    if (SMTP_PORT !== 587 || SMTP_SECURE !== false) {
+    if (SMTP_PORT !== 587 || effectiveSMTP_SECURE !== false) {
       candidates.push({
         host: SMTP_HOST,
         port: 587,
@@ -79,7 +89,7 @@ const getTransportCandidates = () => {
       });
     }
 
-    if (SMTP_PORT !== 465 || SMTP_SECURE !== true) {
+    if (SMTP_PORT !== 465 || effectiveSMTP_SECURE !== true) {
       candidates.push({
         host: SMTP_HOST,
         port: 465,
@@ -119,9 +129,13 @@ const resetTransporter = (key) => {
 const mapSmtpErrorReason = (error) => {
   const code = String(error?.code || "").toUpperCase();
   const responseCode = Number(error?.responseCode || 0);
+  const message = String(error?.message || "").toLowerCase();
 
   if (code === "EAUTH" || responseCode === 534 || responseCode === 535) {
     return "smtp-auth-failed";
+  }
+  if (responseCode === 454 || message.includes("temporary system problem")) {
+    return "smtp-timeout";
   }
   if (code === "ETIMEDOUT") {
     return "smtp-timeout";
@@ -145,7 +159,10 @@ const sendMailSafe = async (mailOptions, context) => {
 
     try {
       await transporter.sendMail(mailOptions);
-      return { sent: true, transport: candidate.label };
+      return {
+        sent: true,
+        transport: candidate.label
+      };
     } catch (error) {
       const reason = mapSmtpErrorReason(error);
       lastFailure = { sent: false, reason };

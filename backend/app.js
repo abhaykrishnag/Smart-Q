@@ -9,7 +9,11 @@ const rateLimit = require("express-rate-limit");
 const mongoSanitize = require("express-mongo-sanitize");
 const hpp = require("hpp");
 
-require("dotenv").config();
+const path = require("path");
+// Always load the backend's own .env (don't rely on process.cwd()).
+require("dotenv").config({
+  path: path.resolve(__dirname, ".env")
+});
 
 const connectDB = require("./config/db");
 const { validateSmtpConfig } = require("./utils/envValidation");
